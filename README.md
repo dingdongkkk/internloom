@@ -96,13 +96,9 @@ response uses the envelope in `core/envelope.py`:
 
 ## AI Usage Log
 
-I used AI assistance to speed up architecture planning, endpoint scaffolding, and
-test coverage. The generated work included the database schema, JWT auth flow
-with OTP/email-change handling, weighted matching engine, lifecycle state
-machines, concurrency-safe apply path, CRUD routers, Alembic migration setup,
-seed data, Docker/env config, README, and Design Decisions document. I reviewed
-the architecture, scoring weights, tricky-part answers, and edge-case behavior,
-then verified the implementation with an automated end-to-end smoke test covering
-auth, matching order, cap auto-close, withdrawal reopen, authorization failures,
-and structured error envelopes. One generated error-handler issue caught by tests
-was diagnosed and fixed before submission.
+The complete upload-ready version is available in [AI_USAGE_LOG.txt](AI_USAGE_LOG.txt).
+I used Claude Opus for architecture planning and first-pass implementation ideas,
+and Codex for repository review, requirement mapping, documentation corrections,
+schema preparation, dependency fixes, and verification. I made the final design
+decisions, reviewed the generated work, and tested the edge-case behavior before
+submission.
