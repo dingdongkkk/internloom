@@ -1,0 +1,430 @@
+{
+  "info": {
+    "name": "InternLoom Talent Matching API",
+    "description": "Complete API collection. Prereq: server running on {{base_url}} with `alembic upgrade head` + `python seed.py` applied.\n\nFlow: run 'Login (student - priya)' and 'Login (company - technova)' first — their test scripts store tokens into collection variables used by every other request.\n\nSeeded credentials (password for all: Password123):\n- company (pre-approved): hr@technova.com\n- student (verified): priya@bmsce.ac.in\n- student (unverified): arjun@nitk.edu.in\n\nThe 'Error cases (judge tests)' folder demonstrates graceful failure: personal email 400, duplicate apply 409, invalid transition 400, wrong actor 403.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "base_url", "value": "http://localhost:8000" },
+    { "key": "student_token", "value": "" },
+    { "key": "company_token", "value": "" },
+    { "key": "admin_token", "value": "internloom-admin-demo" }
+  ],
+  "item": [
+    {
+      "name": "0 - Health",
+      "item": [
+        {
+          "name": "Health check",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/health",
+            "description": "Expected 200: {\"success\":true,\"data\":{\"status\":\"ok\"},\"error\":null,\"meta\":{}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "1 - Auth",
+      "item": [
+        {
+          "name": "Register student (college email)",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/auth/register/student",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"newkid@bmsce.ac.in\",\n  \"password\": \"Password123\"\n}" },
+            "description": "Expected 201. Response data includes user_id and otp_for_demo (in a real system the OTP is emailed). Account is unverified until OTP is submitted — it can log in but NOT apply."
+          }
+        },
+        {
+          "name": "Verify OTP",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/auth/verify-otp",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"user_id\": 6,\n  \"code\": \"<otp_for_demo from register response>\"\n}" },
+            "description": "Expected 200 with is_email_verified=true. Wrong/expired code -> 400 INVALID_OTP / OTP_EXPIRED."
+          }
+        },
+        {
+          "name": "Register company",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/auth/register/company",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"jobs@newco.com\",\n  \"password\": \"Password123\",\n  \"company_name\": \"NewCo\"\n}" },
+            "description": "Expected 201. New companies are NOT approved: they can create draft listings but cannot activate them (admin approval gate; hr@technova.com is seeded pre-approved)."
+          }
+        },
+        {
+          "name": "Login (student - priya)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const j = pm.response.json();",
+                  "if (j.success) {",
+                  "  pm.collectionVariables.set('student_token', j.data.access_token);",
+                  "  pm.collectionVariables.set('student_refresh', j.data.refresh_token);",
+                  "}",
+                  "pm.test('login ok', () => pm.expect(j.success).to.be.true);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/auth/login",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"priya@bmsce.ac.in\",\n  \"password\": \"Password123\"\n}" },
+            "description": "Expected 200 with access_token (1h TTL) + refresh_token (7d). Token auto-saved to {{student_token}}."
+          }
+        },
+        {
+          "name": "Login (company - technova)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const j = pm.response.json();",
+                  "if (j.success) pm.collectionVariables.set('company_token', j.data.access_token);",
+                  "pm.test('login ok', () => pm.expect(j.success).to.be.true);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/auth/login",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"hr@technova.com\",\n  \"password\": \"Password123\"\n}" },
+            "description": "Expected 200. Token auto-saved to {{company_token}}."
+          }
+        },
+        {
+          "name": "Refresh access token",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/auth/refresh",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"refresh_token\": \"{{student_refresh}}\"\n}" },
+            "description": "Expected 200 with a fresh token pair. Passing an ACCESS token here -> 401 WRONG_TOKEN_TYPE (token types are not interchangeable)."
+          }
+        },
+        {
+          "name": "Request email change (re-verification)",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/auth/request-email-change",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{student_token}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"new_email\": \"priya.new@iitb.ac.in\"\n}" },
+            "description": "Expected 200: new address staged as pending_email + OTP issued. The CURRENT email stays verified and fully usable — no lockout (Design Decisions, tricky part #1). Submit the OTP via /auth/verify-otp to complete the switch."
+          }
+        }
+      ]
+    },
+    {
+      "name": "2 - Student profile",
+      "item": [
+        {
+          "name": "Get my profile (+ completeness)",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/profile/me",
+            "header": [{ "key": "Authorization", "value": "Bearer {{student_token}}" }],
+            "description": "Expected 200. `completeness` (0-100) is computed on every fetch, never stored. Priya is seeded at 100."
+          }
+        },
+        {
+          "name": "Update my profile",
+          "request": {
+            "method": "PUT",
+            "url": "{{base_url}}/profile/me",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{student_token}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"bio\": \"Backend + infra enthusiast\",\n  \"skills\": [\"Python\", \"FastAPI\", \"PostgreSQL\", \"Docker\", \"React.js\"]\n}" },
+            "description": "Partial update — only sent fields change. Skills are resolved to normalized rows (case-folded), never stored as CSV."
+          }
+        },
+        {
+          "name": "Delete my profile",
+          "request": {
+            "method": "DELETE",
+            "url": "{{base_url}}/profile/me",
+            "header": [{ "key": "Authorization", "value": "Bearer {{student_token}}" }],
+            "description": "409 PROFILE_HAS_ACTIVE_APPLICATIONS while any application is pending/active (priya has 2 seeded, so this demonstrates the constraint). Succeeds only once applications are terminal."
+          }
+        }
+      ]
+    },
+    {
+      "name": "3 - Listings",
+      "item": [
+        {
+          "name": "Get matched listings (student, ranked)",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/listings?page=1&page_size=20",
+            "header": [{ "key": "Authorization", "value": "Bearer {{student_token}}" }],
+            "description": "Expected 200: ACTIVE listings sorted by match score DESC, each with `score` and a per-signal `breakdown` (required/preferred skills, branch-year, completeness, recency) so the ranking is explainable. Draft listings are hidden."
+          }
+        },
+        {
+          "name": "My listings (company, all statuses)",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/listings/mine",
+            "header": [{ "key": "Authorization", "value": "Bearer {{company_token}}" }],
+            "description": "The company's own listings including drafts, with applicant counts, status and closed_reason. Students get 403."
+          }
+        },
+        {
+          "name": "Create listing (company, born draft)",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/listings",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{company_token}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"title\": \"Platform Intern\",\n  \"description\": \"APIs and infra\",\n  \"required_skills\": [\"Python\", \"PostgreSQL\"],\n  \"preferred_skills\": [\"Docker\"],\n  \"stipend\": 22000,\n  \"location\": \"remote\",\n  \"deadline\": \"2026-08-15T00:00:00Z\",\n  \"target_branch\": \"CSE\",\n  \"target_graduation_year\": 2026,\n  \"max_applicants\": 10\n}" },
+            "description": "Expected 201 with status=draft. Listings are always born in draft; going live is an explicit state transition."
+          }
+        },
+        {
+          "name": "Edit listing (company)",
+          "request": {
+            "method": "PUT",
+            "url": "{{base_url}}/listings/1",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{company_token}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"required_skills\": [\"Python\", \"FastAPI\", \"Docker\"],\n  \"target_branch\": \"CSE\",\n  \"target_graduation_year\": 2026,\n  \"stipend\": 28000\n}" },
+            "description": "Editing required skills on an Active listing does NOT rewrite existing applicants' snapshot scores — students see live scores, companies see apply-time snapshots (Design Decisions, tricky part #3)."
+          }
+        },
+        {
+          "name": "Change listing status (state machine)",
+          "request": {
+            "method": "PATCH",
+            "url": "{{base_url}}/listings/4/status",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{company_token}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"status\": \"active\"\n}" },
+            "description": "Listing 4 is seeded as draft. Valid: draft->active->closed only. Activation also notifies every verified student whose match score > 70."
+          }
+        },
+        {
+          "name": "View applicants (company, snapshot scores)",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/listings/1/applicants?page=1&page_size=20",
+            "header": [{ "key": "Authorization", "value": "Bearer {{company_token}}" }],
+            "description": "Expected 200: applicants sorted by match_score (the score AT APPLY TIME) DESC. Own listings only — another company gets 403."
+          }
+        },
+        {
+          "name": "Apply to listing (student)",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/listings/3/apply",
+            "header": [{ "key": "Authorization", "value": "Bearer {{student_token}}" }],
+            "description": "Expected 201 with the frozen match_score. Requires a VERIFIED student. Gates checked under a row lock: listing active, deadline not passed, cap not reached. Filling the last slot auto-closes the listing (closed_reason=cap_reached)."
+          }
+        }
+      ]
+    },
+    {
+      "name": "4 - Applications",
+      "item": [
+        {
+          "name": "My applications (student)",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/applications/mine",
+            "header": [{ "key": "Authorization", "value": "Bearer {{student_token}}" }],
+            "description": "Spec 2.1: a student sees the status of their OWN applications only — listing title, lifecycle status, frozen match score, and whether withdraw is still allowed."
+          }
+        },
+        {
+          "name": "Withdraw application (student)",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/applications/2/withdraw",
+            "header": [{ "key": "Authorization", "value": "Bearer {{student_token}}" }],
+            "description": "Allowed ONLY from `submitted`. Decrements the listing's applicant count; if the listing was auto-closed at cap it reopens to active (cap closes are derived state — manual closes never reopen; tricky part #4)."
+          }
+        },
+        {
+          "name": "Update application status (company)",
+          "request": {
+            "method": "PATCH",
+            "url": "{{base_url}}/applications/1/status",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{company_token}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"status\": \"under_review\"\n}" },
+            "description": "Forward path: submitted -> under_review -> shortlisted -> (rejected | offer_extended). Skipping a step -> 400 INVALID_APPLICATION_TRANSITION. The student is notified on every change."
+          }
+        },
+        {
+          "name": "Bulk status update (company)",
+          "request": {
+            "method": "PATCH",
+            "url": "{{base_url}}/applications/bulk-status",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{company_token}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"listing_id\": 1,\n  \"from_status\": \"submitted\",\n  \"to_status\": \"rejected\",\n  \"older_than_days\": 7\n}" },
+            "description": "Single endpoint for e.g. 'reject all Submitted older than 7 days'. Returns the number updated; each affected student is notified."
+          }
+        }
+      ]
+    },
+    {
+      "name": "5 - Notifications",
+      "item": [
+        {
+          "name": "List notifications (filter + paginate)",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/notifications?is_read=false&page=1&page_size=20",
+            "header": [{ "key": "Authorization", "value": "Bearer {{student_token}}" }],
+            "description": "Own notifications only, newest first, paginated (page_size capped at 100 — no unbounded queries). Types: application_status, high_match, new_applicant, listing_auto_closed."
+          }
+        },
+        {
+          "name": "Mark read (single ids)",
+          "request": {
+            "method": "PATCH",
+            "url": "{{base_url}}/notifications/read",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{student_token}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"ids\": [1, 2]\n}" },
+            "description": "Marks specific notifications read. Only the caller's own rows are affected."
+          }
+        },
+        {
+          "name": "Mark read (bulk all)",
+          "request": {
+            "method": "PATCH",
+            "url": "{{base_url}}/notifications/read",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{student_token}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"all\": true\n}" },
+            "description": "Marks every unread notification read; returns the count."
+          }
+        }
+      ]
+    },
+    {
+      "name": "6 - Audit (Bonus C)",
+      "item": [
+        {
+          "name": "Get audit log (admin token)",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/audit?page=1&page_size=20&actor_type=company&from=2026-07-01&to=2026-07-31",
+            "header": [{ "key": "X-Admin-Token", "value": "{{admin_token}}" }],
+            "description": "Every successful mutation is logged with actor, action, resource, before/after state. Admin-only (mocked header token; a JWT with role=admin also works). Filterable by actor_type and date range; paginated. Without the token -> 403 ADMIN_ONLY."
+          }
+        }
+      ]
+    },
+    {
+      "name": "7 - Error cases (judge tests)",
+      "item": [
+        {
+          "name": "Personal email rejected (400)",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/auth/register/student",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"someone@gmail.com\",\n  \"password\": \"Password123\"\n}" },
+            "description": "Expected 400 PERSONAL_EMAIL_REJECTED with a clear message — students must use a college domain."
+          }
+        },
+        {
+          "name": "Duplicate application (409)",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/listings/1/apply",
+            "header": [{ "key": "Authorization", "value": "Bearer {{student_token}}" }],
+            "description": "Priya already applied to listing 1 (seeded). Expected 409 ALREADY_APPLIED — a meaningful error, not a 500 (backed by a DB unique constraint, race-safe)."
+          }
+        },
+        {
+          "name": "Invalid state transition (400)",
+          "request": {
+            "method": "PATCH",
+            "url": "{{base_url}}/listings/1/status",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{company_token}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"status\": \"draft\"\n}" },
+            "description": "Active -> draft is illegal. Expected 400 INVALID_STATE_TRANSITION with allowed_from_here in details."
+          }
+        },
+        {
+          "name": "Wrong actor: student reads applicants (403)",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/listings/1/applicants",
+            "header": [{ "key": "Authorization", "value": "Bearer {{student_token}}" }],
+            "description": "Company-only endpoint. Expected 403 FORBIDDEN — role enforced on every protected route."
+          }
+        },
+        {
+          "name": "Unverified student cannot apply (403)",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/listings/1/apply",
+            "header": [{ "key": "Authorization", "value": "Bearer <login as arjun@nitk.edu.in first>" }],
+            "description": "arjun@nitk.edu.in is seeded UNVERIFIED. Log in as arjun, use that token here. Expected 403 EMAIL_NOT_VERIFIED."
+          }
+        },
+        {
+          "name": "Malformed body (422, structured)",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/listings",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{company_token}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"title\": 123,\n  \"max_applicants\": -5\n}" },
+            "description": "Expected 422 VALIDATION_ERROR in the standard envelope with field-level details — the API never crashes on bad input."
+          }
+        },
+        {
+          "name": "No token (401)",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/profile/me",
+            "description": "Expected 401 MISSING_TOKEN — no protected endpoint is reachable without auth."
+          }
+        }
+      ]
+    }
+  ]
+}
