@@ -347,8 +347,8 @@ function renderAuth() {
       <div class="grid2" style="grid-template-columns:1fr">
         ${authRole === "company" ? `<label class="f">Company name<input id="aName" placeholder="Acme Corp"></label>` : ""}
         <label class="f">${authRole === "student" ? "College email" : "Corporate email"}
-          <input id="aEmail" placeholder="${authRole === "student" ? "you@bmsce.ac.in" : "hr@company.com"}"></label>
-        <label class="f">Password<input id="aPass" type="password" placeholder="8+ characters"></label>
+          <input id="aEmail" type="email" autocomplete="email" placeholder="${authRole === "student" ? "you@bmsce.ac.in" : "hr@company.com"}"></label>
+        <label class="f">Password<input id="aPass" type="password" autocomplete="new-password" placeholder="8+ characters"></label>
       </div>
       <div class="row" style="margin-top:12px">
         <button class="primary" onclick="doLogin()">Log in</button>
@@ -363,6 +363,18 @@ function renderAuth() {
 
 async function doSignup() {
   const email = val("aEmail"), password = val("aPass");
+  if (!email || !password) {
+    toast("Enter an email and password before creating an account.", "err");
+    return;
+  }
+  if (password.length < 8) {
+    toast("Password must be at least 8 characters.", "err");
+    return;
+  }
+  if (authRole === "company" && !val("aName")) {
+    toast("Enter your company name before creating an account.", "err");
+    return;
+  }
   const r = authRole === "student"
     ? await api("POST", "/auth/register/student", { email, password })
     : await api("POST", "/auth/register/company", { email, password, company_name: val("aName") });
@@ -408,7 +420,7 @@ function tabsFor(role) {
     ? [["matches", "Matched roles"], ["profile", "My profile"], ["apps", "My applications"], ["notifs", "Notifications"]]
     : [["listings", "My listings"], ["post", "Post a role"], ["notifs", "Notifications"]];
 }
-function render() {
+async function render() {
   const meta = {
     matches: ["Discover roles", "Your strongest matches, ranked by fit."],
     profile: ["My profile", "Keep your details current so every match gets sharper."],
@@ -425,7 +437,7 @@ function render() {
       <div class="page-heading"><div><div class="eyebrow">${S.role === "student" ? "Student" : "Company"} dashboard</div><h2>${meta[0]}</h2><p>${meta[1]}</p></div></div>
       <nav class="tabs">${t}</nav><div id="panel"></div>
     </div>`;
-  ({ matches, profile, apps, notifs, listings, post }[tab])();
+  await ({ matches, profile, apps, notifs, listings, post }[tab])();
 }
 
 /* ================= student: matched roles ================= */
@@ -507,10 +519,14 @@ async function profile() {
     <label class="f" style="margin-top:8px">Bio<input id="pBio" value="${esc(p.bio)}"></label>
     <label class="f" style="margin-top:8px">Skills (comma separated — stored normalized, not as text)
       <input id="pSkills" value="${esc((p.skills || []).join(", "))}"></label>
-    <div class="row" style="margin-top:14px"><button class="primary" onclick="saveProfile()">Save profile</button></div>
+    <div class="row" style="margin-top:14px"><button id="saveProfileBtn" class="primary" onclick="saveProfile()">Save profile</button></div>
   </div>`);
 }
 async function saveProfile() {
+  const saveButton = document.getElementById("saveProfileBtn");
+  if (!saveButton || saveButton.disabled) return;
+  saveButton.disabled = true;
+  saveButton.textContent = "Saving…";
   const body = {
     name: val("pName") || null, college: val("pCollege") || null, branch: val("pBranch") || null,
     graduation_year: val("pYear") ? +val("pYear") : null,
@@ -519,8 +535,21 @@ async function saveProfile() {
     resume_url: val("pResume") || null, bio: val("pBio") || null,
     skills: val("pSkills").split(",").map(s => s.trim()).filter(Boolean),
   };
-  const r = await api("PUT", "/profile/me", body);
-  if (r.success) { toast(`Saved — completeness ${r.data.completeness}%`, "ok"); profile(); }
+  try {
+    const r = await api("PUT", "/profile/me", body);
+    if (r.success) {
+      // Fetch the committed record before showing success. This prevents the
+      // UI from claiming a save while displaying stale form state.
+      await profile();
+      toast(`Saved — completeness ${r.data.completeness}%`, "ok");
+    }
+  } finally {
+    const currentButton = document.getElementById("saveProfileBtn");
+    if (currentButton) {
+      currentButton.disabled = false;
+      currentButton.textContent = "Save profile";
+    }
+  }
 }
 
 /* ================= student: my applications ================= */
@@ -605,7 +634,7 @@ async function listings() {
         <div class="row">
           ${l.status === "draft" ? `<button class="primary" onclick="setStatus(${l.id},'active')">Activate</button>` : ""}
           ${l.status === "active" ? `<button onclick="setStatus(${l.id},'closed')">Close</button>` : ""}
-          <button class="ghost" onclick="viewApplicants(${l.id}, '${esc(l.title)}')">Applicants</button>
+          <button class="ghost" onclick="viewApplicants(${l.id}, decodeURIComponent('${encodeURIComponent(l.title)}'))">Applicants</button>
         </div>
       </div>
     </div>`).join("");
@@ -654,33 +683,62 @@ function post() {
     <p class="sub">Created as a draft — activate it from “My listings”. On activation, students matching above 70 are notified.</p>
     <div class="grid2">
       <label class="f">Title<input id="lTitle" placeholder="Backend Intern"></label>
-      <label class="f">Stipend (₹/month)<input id="lStipend" placeholder="20000"></label>
+      <label class="f">Stipend (₹/month)<input id="lStipend" type="number" min="0" step="0.01" placeholder="20000"></label>
       <label class="f">Required skills (comma sep)<input id="lReq" placeholder="Python, FastAPI"></label>
       <label class="f">Preferred skills (comma sep)<input id="lPref" placeholder="Docker"></label>
       <label class="f">Target branch<input id="lBranch" placeholder="CSE"></label>
-      <label class="f">Target graduation year<input id="lYear" placeholder="2026"></label>
+      <label class="f">Target graduation year<input id="lYear" type="number" min="2000" max="2100" placeholder="2026"></label>
       <label class="f">Location<select id="lLoc"><option>remote</option><option>hybrid</option><option>onsite</option></select></label>
-      <label class="f">Max applicants<input id="lCap" placeholder="10"></label>
-      <label class="f">Deadline<input id="lDeadline" type="date"></label>
+      <label class="f">Max applicants<input id="lCap" type="number" min="1" step="1" placeholder="10"></label>
+      <label class="f">Deadline (DD-MM-YYYY)<input id="lDeadline" type="text" inputmode="numeric" placeholder="31-12-2026" maxlength="10"></label>
     </div>
     <label class="f" style="margin-top:8px">Description<textarea id="lDesc" rows="3" placeholder="What will the intern do?"></textarea></label>
     <div class="row" style="margin-top:14px"><button class="primary" onclick="createListing()">Create draft</button></div>
   </div>`);
 }
+function parseDeadline(value) {
+  const match = value.trim().match(/^(\d{2})[-\/](0[1-9]|1[0-2])[-\/](\d{4})$/);
+  if (!match) return null;
+  const day = Number(match[1]), month = Number(match[2]), year = Number(match[3]);
+  const date = new Date(Date.UTC(year, month - 1, day, 23, 59, 59));
+  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) return null;
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}T23:59:59Z`;
+}
 async function createListing() {
+  const title = val("lTitle");
+  const cap = val("lCap") ? +val("lCap") : NaN;
+  const deadline = val("lDeadline");
+  const deadlineIso = deadline ? parseDeadline(deadline) : null;
+  if (!title) { toast("Enter a job title before creating the listing.", "err"); return; }
+  if (!Number.isInteger(cap) || cap < 1) {
+    toast("Max applicants must be a whole number greater than 0.", "err");
+    return;
+  }
+  if (deadline && !deadlineIso) {
+    toast("Use a valid deadline in DD-MM-YYYY format, for example 31-12-2026.", "err");
+    return;
+  }
+  if (deadlineIso && new Date(deadlineIso) < new Date()) {
+    toast("Deadline must be today or a future date.", "err");
+    return;
+  }
   const body = {
-    title: val("lTitle"), description: val("lDesc") || null,
+    title, description: val("lDesc") || null,
     required_skills: val("lReq").split(",").map(s => s.trim()).filter(Boolean),
     preferred_skills: val("lPref").split(",").map(s => s.trim()).filter(Boolean),
     stipend: val("lStipend") ? +val("lStipend") : null,
     target_branch: val("lBranch") || null,
     target_graduation_year: val("lYear") ? +val("lYear") : null,
     location: val("lLoc"),
-    deadline: val("lDeadline") ? val("lDeadline") + "T23:59:59Z" : null,
-    max_applicants: +val("lCap"),
+    deadline: deadlineIso,
+    max_applicants: cap,
   };
   const r = await api("POST", "/listings", body);
-  if (r.success) { toast(`Draft #${r.data.id} created`, "ok"); tab = "listings"; render(); }
+  if (r.success) {
+    toast(`Draft #${r.data.id} created`, "ok");
+    tab = "listings";
+    await render();
+  }
 }
 
 const panel = html => document.getElementById("panel").innerHTML = html;
